@@ -3,10 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
-import 'models/clinic_application.dart';
-import 'screens/application_status_screen.dart';
-import 'screens/clinic_registration_screen.dart';
+import 'screens/compounder_dashboard_screen.dart';
 import 'services/clinic_store.dart';
+import 'services/queue_store.dart';
 import 'theme/clinical_theme.dart';
 
 void main() async {
@@ -69,20 +68,16 @@ class CareSevaClinicalApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => ClinicStore(),
-      child: Consumer<ClinicStore>(
-        builder: (context, store, child) {
-          return MaterialApp(
-            title: 'CareSeva 2 Clinic Portal',
-            debugShowCheckedModeBanner: false,
-            theme: ClinicalTheme.lightTheme,
-            home: store.currentApplication != null &&
-                    store.currentApplication!.status == ApplicationStatus.approved
-                ? ApplicationStatusScreen(applicationId: store.currentApplication!.id)
-                : const ClinicRegistrationScreen(),
-          );
-        },
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => ClinicStore()),
+        ChangeNotifierProvider(create: (_) => QueueStore()),
+      ],
+      child: MaterialApp(
+        title: 'CareSeva Clinical Portal',
+        debugShowCheckedModeBanner: false,
+        theme: ClinicalTheme.lightTheme,
+        home: const CompounderDashboardScreen(),
       ),
     );
   }

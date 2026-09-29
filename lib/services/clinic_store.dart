@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/clinic_application.dart';
+import 'api_service.dart';
 
 class ClinicStore extends ChangeNotifier {
   static const String _kApplicationsKey = 'cs_clinic_applications';
@@ -31,12 +32,22 @@ class ClinicStore extends ChangeNotifier {
       debugPrint('[ClinicStore Live] Connected to Firestore project: ${firestore.app.options.projectId}');
 
       firestore.collection('clinicApplications').snapshots().listen((snapshot) {
-        _allApplications = snapshot.docs.map((doc) {
+        final List<ClinicApplication> remoteApps = snapshot.docs.map((doc) {
           final data = Map<String, dynamic>.from(doc.data());
           data['id'] = doc.id;
           return ClinicApplication.fromJson(data);
-        }).toList()
-          ..sort((a, b) => b.submittedAt.compareTo(a.submittedAt));
+        }).toList();
+
+        // Merge remote apps into local list, keeping locally submitted pending apps intact
+        for (var remoteApp in remoteApps) {
+          final idx = _allApplications.indexWhere((a) => a.id == remoteApp.id);
+          if (idx != -1) {
+            _allApplications[idx] = remoteApp;
+          } else {
+            _allApplications.add(remoteApp);
+          }
+        }
+        _allApplications.sort((a, b) => b.submittedAt.compareTo(a.submittedAt));
 
         if (_currentApplication != null) {
           final updated = _allApplications.firstWhere(
@@ -62,8 +73,10 @@ class ClinicStore extends ChangeNotifier {
     if (appsRaw != null) {
       final List decoded = jsonDecode(appsRaw);
       _allApplications = decoded.map((e) => ClinicApplication.fromJson(e)).toList();
-    } else {
-      _seedDefaultApplication();
+      // Filter out legacy hardcoded dummy APP-1001 if user submitted real applications
+      if (_allApplications.length > 1) {
+        _allApplications.removeWhere((a) => a.id == 'APP-1001');
+      }
     }
 
     final currentId = prefs.getString(_kCurrentAppIdKey);
@@ -77,34 +90,6 @@ class ClinicStore extends ChangeNotifier {
     }
 
     notifyListeners();
-  }
-
-  void _seedDefaultApplication() {
-    final demoApp = ClinicApplication(
-      id: 'APP-1001',
-      clinicName: 'ABC Dental Clinic',
-      clinicPhone: '+91 98765 43210',
-      email: 'info@abcdental.com',
-      address: '102 Healthcare Avenue, Block B',
-      city: 'Mumbai',
-      state: 'Maharashtra',
-      pincode: '400001',
-      latitude: 19.0760,
-      longitude: 72.8777,
-      speciality: 'Dental & Orthodontics',
-      operatingHours: '09:00 AM - 08:00 PM',
-      doctorName: 'Dr. Rahul Sharma',
-      doctorPhone: '+91 98765 43211',
-      doctorSpeciality: 'Dentist',
-      doctorQualification: 'BDS, MDS (Orthodontics)',
-      doctorRegNum: 'MCI-884920',
-      avgConsultationMinutes: 10,
-      status: ApplicationStatus.pending,
-      submittedAt: DateTime.now().subtract(const Duration(hours: 2)),
-    );
-    _allApplications = [demoApp];
-    _currentApplication = demoApp;
-    _saveData();
   }
 
   Future<void> _saveData() async {
@@ -163,10 +148,20 @@ class ClinicStore extends ChangeNotifier {
       submittedAt: DateTime.now(),
     );
 
+    // Remove old dummy seed app if present
+    _allApplications.removeWhere((a) => a.id == 'APP-1001');
+
     _allApplications.insert(0, app);
     _currentApplication = app;
 
-    // Write directly to Cloud Firestore collection
+    // Send to Railway backend API
+    try {
+      await ApiService.submitApplication(app.toJson());
+    } catch (e) {
+      debugPrint('[ClinicStore] ApiService Submit Error: $e');
+    }
+
+    // Write to Cloud Firestore collection
     try {
       await FirebaseFirestore.instance.collection('clinicApplications').doc(newId).set(app.toJson());
     } catch (e) {

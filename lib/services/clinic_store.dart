@@ -1,6 +1,5 @@
+import 'dart:async';
 import 'dart:convert';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/clinic_application.dart';
@@ -12,34 +11,40 @@ class ClinicStore extends ChangeNotifier {
 
   List<ClinicApplication> _allApplications = [];
   ClinicApplication? _currentApplication;
+  Timer? _pollingTimer;
 
   List<ClinicApplication> get allApplications => _allApplications;
   ClinicApplication? get currentApplication => _currentApplication;
 
   ClinicStore() {
-    _initFirestoreAndLoadData();
+    _initAndLoadData();
   }
 
-  Future<void> _initFirestoreAndLoadData() async {
+  @override
+  void dispose() {
+    _pollingTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initAndLoadData() async {
     await _loadLocalData();
+    await _fetchRemoteApplications();
 
+    // Periodic real-time status polling from Railway MongoDB Backend (Every 3s)
+    _pollingTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      _fetchRemoteApplications();
+    });
+  }
+
+  Future<void> _fetchRemoteApplications() async {
     try {
-      if (FirebaseAuth.instance.currentUser == null) {
-        await FirebaseAuth.instance.signInAnonymously();
-      }
+      final remoteData = await ApiService.getApplications();
+      if (remoteData.isNotEmpty) {
+        final List<ClinicApplication> parsed = remoteData
+            .map((e) => ClinicApplication.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
 
-      final firestore = FirebaseFirestore.instance;
-      debugPrint('[ClinicStore Live] Connected to Firestore project: ${firestore.app.options.projectId}');
-
-      firestore.collection('clinicApplications').snapshots().listen((snapshot) {
-        final List<ClinicApplication> remoteApps = snapshot.docs.map((doc) {
-          final data = Map<String, dynamic>.from(doc.data());
-          data['id'] = doc.id;
-          return ClinicApplication.fromJson(data);
-        }).toList();
-
-        // Merge remote apps into local list, keeping locally submitted pending apps intact
-        for (var remoteApp in remoteApps) {
+        for (var remoteApp in parsed) {
           final idx = _allApplications.indexWhere((a) => a.id == remoteApp.id);
           if (idx != -1) {
             _allApplications[idx] = remoteApp;
@@ -56,13 +61,11 @@ class ClinicStore extends ChangeNotifier {
           );
           _currentApplication = updated;
         }
-        _saveData();
+        await _saveData();
         notifyListeners();
-      }, onError: (e) {
-        debugPrint('[ClinicStore Firestore Error] Applications stream: $e');
-      });
+      }
     } catch (e) {
-      debugPrint('[ClinicStore] Local mode: $e');
+      debugPrint('[ClinicStore] Railway API Polling Notice: $e');
     }
   }
 
@@ -73,7 +76,6 @@ class ClinicStore extends ChangeNotifier {
     if (appsRaw != null) {
       final List decoded = jsonDecode(appsRaw);
       _allApplications = decoded.map((e) => ClinicApplication.fromJson(e)).toList();
-      // Filter out legacy hardcoded dummy APP-1001 if user submitted real applications
       if (_allApplications.length > 1) {
         _allApplications.removeWhere((a) => a.id == 'APP-1001');
       }
@@ -103,7 +105,7 @@ class ClinicStore extends ChangeNotifier {
     }
   }
 
-  /// Submit a new Clinic Application
+  /// Submit a new Clinic Application directly to Railway MongoDB Backend
   Future<ClinicApplication> submitApplication({
     required String clinicName,
     required String clinicPhone,
@@ -148,24 +150,16 @@ class ClinicStore extends ChangeNotifier {
       submittedAt: DateTime.now(),
     );
 
-    // Remove old dummy seed app if present
     _allApplications.removeWhere((a) => a.id == 'APP-1001');
 
     _allApplications.insert(0, app);
     _currentApplication = app;
 
-    // Send to Railway backend API
+    // Direct HTTP POST to Railway FastAPI MongoDB Backend
     try {
       await ApiService.submitApplication(app.toJson());
     } catch (e) {
       debugPrint('[ClinicStore] ApiService Submit Error: $e');
-    }
-
-    // Write to Cloud Firestore collection
-    try {
-      await FirebaseFirestore.instance.collection('clinicApplications').doc(newId).set(app.toJson());
-    } catch (e) {
-      debugPrint('[ClinicStore] Firestore Submit Application Error: $e');
     }
 
     await _saveData();
@@ -173,32 +167,8 @@ class ClinicStore extends ChangeNotifier {
     return app;
   }
 
-  /// Refresh Application Status
+  /// Refresh Application Status from Railway MongoDB Backend
   Future<void> refreshStatus() async {
-    try {
-      final doc = await FirebaseFirestore.instance.collection('clinicApplications').doc(_currentApplication?.id).get();
-      if (doc.exists && doc.data() != null) {
-        _currentApplication = ClinicApplication.fromJson(doc.data()!);
-        notifyListeners();
-        return;
-      }
-    } catch (e) {
-      debugPrint('[ClinicStore] Firestore Refresh Error: $e');
-    }
-
-    final prefs = await SharedPreferences.getInstance();
-    final appsRaw = prefs.getString(_kApplicationsKey);
-    if (appsRaw != null) {
-      final List decoded = jsonDecode(appsRaw);
-      _allApplications = decoded.map((e) => ClinicApplication.fromJson(e)).toList();
-      if (_currentApplication != null) {
-        final updated = _allApplications.firstWhere(
-          (a) => a.id == _currentApplication!.id,
-          orElse: () => _currentApplication!,
-        );
-        _currentApplication = updated;
-      }
-    }
-    notifyListeners();
+    await _fetchRemoteApplications();
   }
 }

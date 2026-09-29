@@ -130,9 +130,14 @@ class ApiService {
     }
   }
 
-  static Future<List<dynamic>> getDoctors(String clinicId) async {
+  static Future<List<dynamic>> getApprovedClinics() => getClinics();
+
+  static Future<List<dynamic>> getDoctors([String? clinicId]) async {
     try {
-      final res = await http.get(Uri.parse('$baseUrl/clinics/$clinicId/doctors'), headers: headers);
+      final url = clinicId != null && clinicId.isNotEmpty
+          ? '$baseUrl/clinics/$clinicId/doctors'
+          : '$baseUrl/doctors';
+      final res = await http.get(Uri.parse(url), headers: headers);
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         return data['doctors'] ?? [];

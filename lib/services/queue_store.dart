@@ -1,6 +1,4 @@
 import 'dart:convert';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,6 +7,7 @@ import '../models/doctor.dart';
 import '../models/queue_state.dart';
 import '../models/token_model.dart';
 import '../models/user_profile.dart';
+import 'api_service.dart';
 
 class QueueStore extends ChangeNotifier {
   static const String _kUserProfileKey = 'cs_user_profile';
@@ -31,71 +30,33 @@ class QueueStore extends ChangeNotifier {
   List<TokenModel> get tokens => _tokens;
 
   QueueStore() {
-    _initFirestoreAndLoadData();
+    _initAndLoadData();
   }
 
-  Future<void> _initFirestoreAndLoadData() async {
+  Future<void> _initAndLoadData() async {
     await _loadLocalData();
 
+    // Fetch approved clinics and doctors from Railway FastAPI MongoDB backend
     try {
-      if (FirebaseAuth.instance.currentUser == null) {
-        await FirebaseAuth.instance.signInAnonymously();
-      }
-
-      final firestore = FirebaseFirestore.instance;
-      debugPrint('[QueueStore Live] Connected to Firestore project: ${firestore.app.options.projectId}');
-
-      // 1. Listen to Clinics Collection
-      firestore.collection('clinics').snapshots().listen((snapshot) {
-        _clinics = snapshot.docs.map((doc) {
-          final data = Map<String, dynamic>.from(doc.data());
-          data['clinicId'] = doc.id;
-          return Clinic.fromJson(data);
-        }).toList();
-        _saveData();
+      final remoteClinics = await ApiService.getApprovedClinics();
+      if (remoteClinics.isNotEmpty) {
+        _clinics = remoteClinics.map((e) => Clinic.fromJson(Map<String, dynamic>.from(e))).toList();
+        await _saveData();
         notifyListeners();
-      }, onError: (e) => debugPrint('[QueueStore Firestore Error] Clinics stream: $e'));
-
-      // 2. Listen to Doctors Collection
-      firestore.collection('doctors').snapshots().listen((snapshot) {
-        if (snapshot.docs.isNotEmpty) {
-          _doctors = snapshot.docs.map((doc) {
-            final data = Map<String, dynamic>.from(doc.data());
-            data['doctorId'] = doc.id;
-            return Doctor.fromJson(data);
-          }).toList();
-          _saveData();
-          notifyListeners();
-        }
-      }, onError: (e) => debugPrint('[QueueStore] Firestore Doctors Error: $e'));
-
-      // 3. Listen to Queues Collection
-      firestore.collection('queues').snapshots().listen((snapshot) {
-        if (snapshot.docs.isNotEmpty) {
-          for (var doc in snapshot.docs) {
-            final data = Map<String, dynamic>.from(doc.data());
-            data['queueId'] = doc.id;
-            _queues[doc.id] = QueueState.fromJson(data);
-          }
-          _saveData();
-          notifyListeners();
-        }
-      }, onError: (e) => debugPrint('[QueueStore] Firestore Queues Error: $e'));
-
-      // 4. Listen to Tokens Collection
-      firestore.collection('tokens').snapshots().listen((snapshot) {
-        if (snapshot.docs.isNotEmpty) {
-          _tokens = snapshot.docs.map((doc) {
-            final data = Map<String, dynamic>.from(doc.data());
-            data['tokenId'] = doc.id;
-            return TokenModel.fromJson(data);
-          }).toList();
-          _saveData();
-          notifyListeners();
-        }
-      }, onError: (e) => debugPrint('[QueueStore] Firestore Tokens Error: $e'));
+      }
     } catch (e) {
-      debugPrint('[QueueStore] Firestore Local Mode: $e');
+      debugPrint('[QueueStore] Railway Clinics API Notice: $e');
+    }
+
+    try {
+      final remoteDoctors = await ApiService.getDoctors();
+      if (remoteDoctors.isNotEmpty) {
+        _doctors = remoteDoctors.map((e) => Doctor.fromJson(Map<String, dynamic>.from(e))).toList();
+        await _saveData();
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('[QueueStore] Railway Doctors API Notice: $e');
     }
   }
 
@@ -156,22 +117,6 @@ class QueueStore extends ChangeNotifier {
         operatingHours: '09:00 AM - 08:00 PM',
         status: ClinicStatus.approved,
       ),
-      Clinic(
-        clinicId: 'CS-9X42M',
-        clinicRefNum: 'REF-9X42M',
-        name: 'City Care Polyclinic',
-        phone: '+91 98123 45678',
-        email: 'info@citycare.org',
-        address: '55 Park Street, Near Metro Station',
-        city: 'Delhi',
-        state: 'Delhi',
-        pincode: '110001',
-        latitude: 28.6139,
-        longitude: 77.2090,
-        speciality: 'General Medicine & Pediatrics',
-        operatingHours: '10:00 AM - 07:00 PM',
-        status: ClinicStatus.approved,
-      ),
     ];
 
     _doctors = [
@@ -223,9 +168,6 @@ class QueueStore extends ChangeNotifier {
 
   Future<void> setUserProfile(UserProfile profile) async {
     _currentUser = profile;
-    try {
-      await FirebaseFirestore.instance.collection('users').doc(profile.userId).set(profile.toJson());
-    } catch (_) {}
     await _saveData();
     notifyListeners();
   }
@@ -265,13 +207,6 @@ class QueueStore extends ChangeNotifier {
     final q = getQueueState(clinicId, doctorId, date);
     q.isActive = active;
     q.updatedAt = DateTime.now();
-
-    try {
-      await FirebaseFirestore.instance.collection('queues').doc(q.queueId).set(q.toJson(), SetOptions(merge: true));
-    } catch (e) {
-      debugPrint('[QueueStore] Firestore Toggle Queue Error: $e');
-    }
-
     await _saveData();
     notifyListeners();
   }
@@ -291,12 +226,6 @@ class QueueStore extends ChangeNotifier {
     for (var t in currentTokens) {
       t.status = TokenStatus.completed;
       t.completedAt = DateTime.now();
-      try {
-        FirebaseFirestore.instance.collection('tokens').doc(t.tokenId).update({
-          'status': TokenStatus.completed.name,
-          'completedAt': DateTime.now().toIso8601String(),
-        });
-      } catch (_) {}
     }
 
     final waitingTokens = list.where((t) => t.status == TokenStatus.waiting).toList();
@@ -305,21 +234,11 @@ class QueueStore extends ChangeNotifier {
       nextToken.status = TokenStatus.called;
       nextToken.calledAt = DateTime.now();
       q.currentToken = nextToken.tokenNumber;
-      try {
-        FirebaseFirestore.instance.collection('tokens').doc(nextToken.tokenId).update({
-          'status': TokenStatus.called.name,
-          'calledAt': DateTime.now().toIso8601String(),
-        });
-      } catch (_) {}
     } else {
       q.currentToken = q.lastToken > 0 ? q.lastToken : 0;
     }
 
     q.updatedAt = DateTime.now();
-    try {
-      FirebaseFirestore.instance.collection('queues').doc(q.queueId).set(q.toJson());
-    } catch (_) {}
-
     await _saveData();
     notifyListeners();
   }
@@ -332,13 +251,6 @@ class QueueStore extends ChangeNotifier {
     token.status = TokenStatus.skipped;
     token.skippedAt = DateTime.now();
 
-    try {
-      FirebaseFirestore.instance.collection('tokens').doc(token.tokenId).update({
-        'status': TokenStatus.skipped.name,
-        'skippedAt': DateTime.now().toIso8601String(),
-      });
-    } catch (_) {}
-
     final q = getQueueState(token.clinicId, token.doctorId, token.date);
 
     if (q.currentToken == token.tokenNumber) {
@@ -350,10 +262,6 @@ class QueueStore extends ChangeNotifier {
     }
 
     q.updatedAt = DateTime.now();
-    try {
-      FirebaseFirestore.instance.collection('queues').doc(q.queueId).set(q.toJson());
-    } catch (_) {}
-
     await _saveData();
     notifyListeners();
   }
@@ -369,27 +277,13 @@ class QueueStore extends ChangeNotifier {
     for (var t in list.where((x) => x.status == TokenStatus.called)) {
       t.status = TokenStatus.completed;
       t.completedAt = DateTime.now();
-      try {
-        FirebaseFirestore.instance.collection('tokens').doc(t.tokenId).update({
-          'status': TokenStatus.completed.name,
-          'completedAt': DateTime.now().toIso8601String(),
-        });
-      } catch (_) {}
     }
 
     token.status = TokenStatus.called;
     token.calledAt = DateTime.now();
     q.currentToken = token.tokenNumber;
-
-    try {
-      FirebaseFirestore.instance.collection('tokens').doc(token.tokenId).update({
-        'status': TokenStatus.called.name,
-        'calledAt': DateTime.now().toIso8601String(),
-      });
-      FirebaseFirestore.instance.collection('queues').doc(q.queueId).set(q.toJson());
-    } catch (_) {}
-
     q.updatedAt = DateTime.now();
+
     await _saveData();
     notifyListeners();
   }

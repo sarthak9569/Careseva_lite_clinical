@@ -59,6 +59,10 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>CareSeva Clinical requires location access to auto-fill clinic address and GPS coordinates during registration.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>CareSeva Clinical requires location access to auto-fill clinic address and GPS coordinates during registration.</string>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

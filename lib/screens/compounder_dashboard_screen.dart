@@ -7,6 +7,7 @@ import '../models/doctor.dart';
 import '../services/api_service.dart';
 import '../services/queue_store.dart';
 import 'compounder_queue_screen.dart';
+import 'clinic_registration_screen.dart';
 
 class CompounderDashboardScreen extends StatefulWidget {
   const CompounderDashboardScreen({super.key});
@@ -176,6 +177,16 @@ class _CompounderDashboardScreenState extends State<CompounderDashboardScreen> {
         title: Text('CareSeva Clinical Portal', style: GoogleFonts.outfit(fontWeight: FontWeight.bold)),
         actions: [
           IconButton(
+            tooltip: 'Register New Clinic',
+            icon: const Icon(Icons.add_business_rounded),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ClinicRegistrationScreen()),
+              );
+            },
+          ),
+          IconButton(
             tooltip: 'Logout',
             icon: const Icon(Icons.logout_rounded),
             onPressed: () async {
@@ -198,111 +209,178 @@ class _CompounderDashboardScreenState extends State<CompounderDashboardScreen> {
   }
 
   Widget _buildVerificationView() {
-    return Card(
-      elevation: 3,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Card(
+          elevation: 3,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0F766E).withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.verified_user_outlined, color: Color(0xFF0F766E), size: 28),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0F766E).withValues(alpha: 0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.verified_user_outlined, color: Color(0xFF0F766E), size: 28),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Clinic Authorization',
+                            style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold),
+                          ),
+                          const Text(
+                            'Enter Clinic ID to verify via registered clinic phone',
+                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Clinic Authorization',
-                        style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.bold),
+                const SizedBox(height: 24),
+
+                if (_errorMessage != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.red.shade300),
+                    ),
+                    child: Text(_errorMessage!, style: TextStyle(color: Colors.red.shade900, fontSize: 13)),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                Text('CLINIC ID (e.g. CS-7K82P)', style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _clinicIdController,
+                  enabled: !_isOtpSent,
+                  decoration: const InputDecoration(
+                    hintText: 'Enter Clinic ID',
+                    prefixIcon: Icon(Icons.local_hospital_outlined),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                if (!_isOtpSent)
+                  SizedBox(
+                    height: 52,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F766E)),
+                      onPressed: _isLoading ? null : _handleSendOtp,
+                      icon: _isLoading
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : const Icon(Icons.send_rounded),
+                      label: const Text('SEND OTP TO CLINIC PHONE', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+
+                if (_isOtpSent) ...[
+                  Text('ENTER OTP SENT TO $_maskedPhone', style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _otpController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      hintText: 'Enter 6-digit OTP (Demo: 123456)',
+                      prefixIcon: Icon(Icons.lock_outline_rounded),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    height: 52,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
+                      onPressed: _isLoading ? null : _handleVerifyOtp,
+                      icon: _isLoading
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : const Icon(Icons.check_circle_outline_rounded),
+                      label: const Text('VERIFY & ENTER PORTAL', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // Dedicated Register Clinic Option Card
+        Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0284C7).withValues(alpha: 0.1),
+                        shape: BoxShape.circle,
                       ),
-                      const Text(
-                        'Enter Clinic ID to verify via registered clinic phone',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      child: const Icon(Icons.add_business_rounded, color: Color(0xFF0284C7), size: 24),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Register New Clinic',
+                            style: GoogleFonts.outfit(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          const Text(
+                            'Don\'t have a Clinic ID? Register your clinic to get approved.',
+                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF0284C7),
+                      side: const BorderSide(color: Color(0xFF0284C7), width: 1.5),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ClinicRegistrationScreen()),
+                      );
+                    },
+                    icon: const Icon(Icons.app_registration_rounded),
+                    label: const Text('REGISTER A CLINIC NOW', style: TextStyle(fontWeight: FontWeight.bold)),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 24),
-
-            if (_errorMessage != null) ...[
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade50,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.red.shade300),
-                ),
-                child: Text(_errorMessage!, style: TextStyle(color: Colors.red.shade900, fontSize: 13)),
-              ),
-              const SizedBox(height: 16),
-            ],
-
-            Text('CLINIC ID (e.g. CS-7K82P)', style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
-            const SizedBox(height: 6),
-            TextField(
-              controller: _clinicIdController,
-              enabled: !_isOtpSent,
-              decoration: const InputDecoration(
-                hintText: 'Enter Clinic ID',
-                prefixIcon: Icon(Icons.local_hospital_outlined),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            if (!_isOtpSent)
-              SizedBox(
-                height: 52,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F766E)),
-                  onPressed: _isLoading ? null : _handleSendOtp,
-                  icon: _isLoading
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                      : const Icon(Icons.send_rounded),
-                  label: const Text('SEND OTP TO CLINIC PHONE', style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ),
-
-            if (_isOtpSent) ...[
-              Text('ENTER OTP SENT TO $_maskedPhone', style: GoogleFonts.outfit(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
-              const SizedBox(height: 6),
-              TextField(
-                controller: _otpController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  hintText: 'Enter 6-digit OTP (Demo: 123456)',
-                  prefixIcon: Icon(Icons.lock_outline_rounded),
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                height: 52,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
-                  onPressed: _isLoading ? null : _handleVerifyOtp,
-                  icon: _isLoading
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                      : const Icon(Icons.check_circle_outline_rounded),
-                  label: const Text('VERIFY & ENTER PORTAL', style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ],
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 

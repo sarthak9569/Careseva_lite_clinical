@@ -24,6 +24,20 @@ class CompounderQueueScreen extends StatefulWidget {
 class _CompounderQueueScreenState extends State<CompounderQueueScreen> {
   bool _isActionProcessing = false;
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final queueStore = Provider.of<QueueStore>(context, listen: false);
+      final today = DateFormat('yyyy-MM-DD').format(DateTime.now());
+      queueStore.startQueueSync(
+        widget.clinic.clinicId,
+        today,
+        doctorId: widget.doctor.doctorId,
+      );
+    });
+  }
+
   void _handleCallNext() async {
     setState(() => _isActionProcessing = true);
     final queueStore = Provider.of<QueueStore>(context, listen: false);
